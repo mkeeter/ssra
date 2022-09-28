@@ -1,5 +1,6 @@
 use arrayvec::ArrayVec;
 use std::collections::BTreeMap;
+use std::fmt::Write;
 use wasm_bindgen::prelude::*;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -27,15 +28,15 @@ enum Op {
         name: String,
         out: SsaVariable,
     },
-    Output {
-        out: SsaVariable,
-    },
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct Register(usize);
+impl Register {
+    pub const INVALID: Self = Self(usize::MAX);
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct Memory(usize);
@@ -65,9 +66,23 @@ enum AsmOp {
         name: String,
         out: Register,
     },
-    Output {
-        out: Register,
-    },
+}
+
+impl AsmOp {
+    fn to_string(&self, offset: usize) -> String {
+        match self {
+            AsmOp::Nonary { name, out } => format!("r{} = {name}()", out.0),
+            AsmOp::Unary { name, out, lhs } => format!("r{} = {name}(r{})", out.0, lhs.0),
+            AsmOp::Binary {
+                name,
+                out,
+                lhs,
+                rhs,
+            } => format!("r{} = {name}(r{}, r{})", out.0, lhs.0, rhs.0),
+            AsmOp::Load { src, dst } => format!("r{} = LOAD(mem + {})", dst.0, src.0 - offset),
+            AsmOp::Store { src, dst } => format!("STORE(r{}, mem + {})", src.0, dst.0 - offset),
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -110,8 +125,8 @@ impl<const N: usize> RegisterAllocator<N> {
     ///
     /// Upon construction, SSA register 0 is bound to local register 0; you
     /// would be well advised to use it as the output of your function.
-    pub fn new(size: usize) -> Self {
-        let mut out = Self {
+    pub fn new() -> Self {
+        Self {
             allocations: vec![],
 
             registers: [SsaVariable(usize::MAX); N],
@@ -122,9 +137,7 @@ impl<const N: usize> RegisterAllocator<N> {
 
             total_slots: 1,
             out: Vec::with_capacity(1024),
-        };
-        out.bind_register(SsaVariable(0), Register(0));
-        out
+        }
     }
 
     fn get_allocation(&mut self, i: SsaVariable) -> &mut Allocation {
@@ -230,6 +243,12 @@ impl<const N: usize> RegisterAllocator<N> {
         self.register_lru.poke(reg.0);
     }
 
+    fn bind_initial_register(&mut self, n: SsaVariable, reg: Register) {
+        self.registers[reg.0] = n;
+        *self.get_allocation(n) = Allocation::Register(reg);
+        self.register_lru.poke(reg.0);
+    }
+
     /// Release a register back to the pool of spares
     fn release_reg(&mut self, reg: Register) {
         // Release the output register, so it could be used for inputs
@@ -260,10 +279,9 @@ impl<const N: usize> RegisterAllocator<N> {
     /// evict the oldest register using `Self::get_register`, with the
     /// appropriate set of LOAD/STORE operations.
     fn get_out_reg(&mut self, out: SsaVariable) -> Register {
-        use Allocation::*;
         match *self.get_allocation(out) {
-            Register(r_x) => r_x,
-            Memory(m_x) => {
+            Allocation::Register(r_x) => r_x,
+            Allocation::Memory(m_x) => {
                 // TODO: this could be more efficient with a Swap instruction,
                 // since we know that we're about to free a memory slot.
                 let r_a = self.get_register();
@@ -273,7 +291,7 @@ impl<const N: usize> RegisterAllocator<N> {
                 self.bind_register(out, r_a);
                 r_a
             }
-            Unassigned => panic!("Cannot have unassigned output"),
+            Allocation::Unassigned => Register::INVALID,
         }
     }
 
@@ -288,24 +306,26 @@ impl<const N: usize> RegisterAllocator<N> {
             lhs,
             name: name.to_owned(),
         };
-        use Allocation::*;
         let r_x = self.get_out_reg(out);
+        if r_x == Register::INVALID {
+            return;
+        }
         match *self.get_allocation(arg) {
-            Register(r_y) => {
+            Allocation::Register(r_y) => {
                 assert!(r_x != r_y);
                 self.out.push(op(r_x, r_y));
                 self.release_reg(r_x);
             }
-            Memory(m_y) => {
+            Allocation::Memory(m_y) => {
                 self.out.push(op(r_x, r_x));
                 self.rebind_register(arg, r_x);
 
                 self.out.push(AsmOp::Store { src: r_x, dst: m_y });
                 self.release_mem(m_y);
             }
-            Unassigned => {
+            Allocation::Unassigned => {
                 self.out.push(op(r_x, r_x));
-                self.rebind_register(arg, r_x);
+                self.bind_initial_register(arg, r_x);
             }
         }
     }
@@ -327,28 +347,30 @@ impl<const N: usize> RegisterAllocator<N> {
             rhs,
             name: name.to_owned(),
         };
-        use Allocation::*;
         let r_x = self.get_out_reg(out);
+        if r_x == Register::INVALID {
+            return;
+        }
         match (*self.get_allocation(lhs), *self.get_allocation(rhs)) {
-            (Register(r_y), Register(r_z)) => {
+            (Allocation::Register(r_y), Allocation::Register(r_z)) => {
                 self.out.push(op(r_x, r_y, r_z));
                 self.release_reg(r_x);
             }
-            (Memory(m_y), Register(r_z)) => {
+            (Allocation::Memory(m_y), Allocation::Register(r_z)) => {
                 self.out.push(op(r_x, r_x, r_z));
                 self.rebind_register(lhs, r_x);
 
                 self.out.push(AsmOp::Store { src: r_x, dst: m_y });
                 self.release_mem(m_y);
             }
-            (Register(r_y), Memory(m_z)) => {
+            (Allocation::Register(r_y), Allocation::Memory(m_z)) => {
                 self.out.push(op(r_x, r_y, r_x));
                 self.rebind_register(rhs, r_x);
 
                 self.out.push(AsmOp::Store { src: r_x, dst: m_z });
                 self.release_mem(m_z);
             }
-            (Memory(m_y), Memory(m_z)) => {
+            (Allocation::Memory(m_y), Allocation::Memory(m_z)) => {
                 let r_a = if lhs == rhs { r_x } else { self.get_register() };
 
                 self.out.push(op(r_x, r_x, r_a));
@@ -365,29 +387,29 @@ impl<const N: usize> RegisterAllocator<N> {
                     self.release_mem(m_z);
                 }
             }
-            (Unassigned, Register(r_z)) => {
+            (Allocation::Unassigned, Allocation::Register(r_z)) => {
                 self.out.push(op(r_x, r_x, r_z));
-                self.rebind_register(lhs, r_x);
+                self.bind_initial_register(lhs, r_x);
             }
-            (Register(r_y), Unassigned) => {
+            (Allocation::Register(r_y), Allocation::Unassigned) => {
                 self.out.push(op(r_x, r_y, r_x));
-                self.rebind_register(rhs, r_x);
+                self.bind_initial_register(rhs, r_x);
             }
-            (Unassigned, Unassigned) => {
+            (Allocation::Unassigned, Allocation::Unassigned) => {
                 let r_a = if lhs == rhs { r_x } else { self.get_register() };
 
                 self.out.push(op(r_x, r_x, r_a));
-                self.rebind_register(lhs, r_x);
+                self.bind_initial_register(lhs, r_x);
                 if lhs != rhs {
-                    self.bind_register(rhs, r_a);
+                    self.bind_initial_register(rhs, r_a);
                 }
             }
-            (Unassigned, Memory(m_z)) => {
+            (Allocation::Unassigned, Allocation::Memory(m_z)) => {
                 let r_a = self.get_register();
                 assert!(r_a != r_x);
 
                 self.out.push(op(r_x, r_x, r_a));
-                self.rebind_register(lhs, r_x);
+                self.bind_initial_register(lhs, r_x);
                 if lhs != rhs {
                     self.bind_register(rhs, r_a);
                 }
@@ -395,15 +417,14 @@ impl<const N: usize> RegisterAllocator<N> {
                 self.out.push(AsmOp::Store { src: r_a, dst: m_z });
                 self.release_mem(m_z);
             }
-            (Memory(m_y), Unassigned) => {
+            (Allocation::Memory(m_y), Allocation::Unassigned) => {
                 let r_a = self.get_register();
                 assert!(r_a != r_x);
 
                 self.out.push(op(r_x, r_a, r_x));
                 self.bind_register(lhs, r_a);
-                if lhs != rhs {
-                    self.rebind_register(rhs, r_x);
-                }
+                assert!(lhs != rhs);
+                self.bind_initial_register(rhs, r_x);
 
                 self.out.push(AsmOp::Store { src: r_a, dst: m_y });
                 self.release_mem(m_y);
@@ -413,11 +434,40 @@ impl<const N: usize> RegisterAllocator<N> {
 
     fn op_out_only(&mut self, out: SsaVariable, name: &str) {
         let r_x = self.get_out_reg(out);
+        if r_x == Register::INVALID {
+            return;
+        }
         self.out.push(AsmOp::Nonary {
             out: r_x,
             name: name.to_owned(),
         });
         self.release_reg(r_x);
+    }
+
+    fn run(tape: &[Op]) -> Vec<AsmOp> {
+        if tape.is_empty() {
+            return vec![];
+        }
+
+        let mut alloc = Self::new();
+        let out_ssa = match tape.last().unwrap() {
+            Op::Nonary { out, .. } | Op::Unary { out, .. } | Op::Binary { out, .. } => *out,
+        };
+        alloc.bind_initial_register(out_ssa, Register(0));
+
+        for t in tape.iter().rev() {
+            match t {
+                Op::Nonary { name, out } => alloc.op_out_only(*out, name),
+                Op::Unary { name, out, lhs } => alloc.op_reg(*out, *lhs, name),
+                Op::Binary {
+                    name,
+                    out,
+                    lhs,
+                    rhs,
+                } => alloc.op_reg_reg(*out, *lhs, *rhs, name),
+            }
+        }
+        alloc.out
     }
 }
 
@@ -493,38 +543,50 @@ impl<const N: usize> Lru<N> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-fn main() {
-    println!("Hello, world!");
+#[wasm_bindgen(start)]
+pub fn bind_console_err() {
+    console_error_panic_hook::set_once();
 }
 
 #[wasm_bindgen]
 pub fn do_the_thing(s: String) -> String {
-    format!("{:?}", parse(&s))
+    if s.is_empty() {
+        return "Error:\nInput is empty".to_owned();
+    }
+    match parse(&s) {
+        Ok(s) => {
+            let allocated = RegisterAllocator::<2>::run(&s);
+            let mut out = "".to_owned();
+            for s in allocated.into_iter().rev() {
+                if !out.is_empty() {
+                    out += "\n";
+                }
+                _ = write!(&mut out, "{}", s.to_string(2));
+            }
+            out
+        }
+        Err((line_num, err)) => format!("Error:\n{err}\n(line {})", line_num + 1),
+    }
 }
 
-fn parse(s: &str) -> Result<Vec<Op>, String> {
+fn parse(s: &str) -> Result<Vec<Op>, (usize, String)> {
     let mut vars = BTreeMap::new();
     let mut out = vec![];
-    for line in s.split('\n') {
-        out.push(parse_line(line, &mut vars)?);
+    for (index, line) in s.split('\n').enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match parse_line(line, &mut vars) {
+            Ok(v) => out.push(v),
+            Err(e) => return Err((index, e)),
+        }
     }
     Ok(out)
 }
 
-fn parse_line(mut line: &str, vars: &mut BTreeMap<String, SsaVariable>) -> Result<Op, String> {
+fn parse_line(line: &str, vars: &mut BTreeMap<String, SsaVariable>) -> Result<Op, String> {
     let line = line.trim();
-    if let Some(rest) = line.strip_prefix("OUTPUT(") {
-        if let Some(name) = rest.strip_suffix(')') {
-            if let Some(out) = vars.get(name) {
-                return Ok(Op::Output { out: *out });
-            } else {
-                return Err(format!("Unknown output: {name}"));
-            }
-        } else {
-            return Err("Missing close parenthesis".to_owned());
-        }
-    }
-
     let mut iter = line.split('=');
 
     let out = iter.next().ok_or_else(|| "Missing =".to_owned())?.trim();
@@ -541,7 +603,14 @@ fn parse_line(mut line: &str, vars: &mut BTreeMap<String, SsaVariable>) -> Resul
     let (op, rest) = op
         .split_once('(')
         .ok_or_else(|| "Missing opening (".to_owned())?;
+    let op = op.trim();
+    if op == "LOAD" || op == "STORE" {
+        return Err(format!("Use of reserved function name: {}", op));
+    }
+
     let rest = rest
+        .trim_end_matches(';')
+        .trim()
         .strip_suffix(')')
         .ok_or_else(|| "Missing closing )".to_owned())?;
 

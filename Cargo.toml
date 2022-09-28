@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 arrayvec = "0.7.2"
+console_error_panic_hook = "*"
 wasm-bindgen = "^0.2"
 
 [lib]

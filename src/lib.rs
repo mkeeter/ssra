@@ -12,20 +12,20 @@ impl SsaVariable {
 }
 
 #[derive(Debug)]
-enum Op {
+enum Op<'a> {
     Binary {
-        name: String,
+        name: &'a str,
         out: SsaVariable,
         lhs: SsaVariable,
         rhs: SsaVariable,
     },
     Unary {
-        name: String,
+        name: &'a str,
         out: SsaVariable,
         lhs: SsaVariable,
     },
     Nonary {
-        name: String,
+        name: &'a str,
         out: SsaVariable,
     },
 }
@@ -42,7 +42,7 @@ impl Register {
 struct Memory(usize);
 
 #[derive(Debug)]
-enum AsmOp {
+enum AsmOp<'a> {
     Load {
         src: Memory,
         dst: Register,
@@ -52,23 +52,23 @@ enum AsmOp {
         dst: Memory,
     },
     Binary {
-        name: String,
+        name: &'a str,
         out: Register,
         lhs: Register,
         rhs: Register,
     },
     Unary {
-        name: String,
+        name: &'a str,
         out: Register,
         lhs: Register,
     },
     Nonary {
-        name: String,
+        name: &'a str,
         out: Register,
     },
 }
 
-impl AsmOp {
+impl AsmOp<'_> {
     fn to_string(&self, offset: usize) -> String {
         match self {
             AsmOp::Nonary { name, out } => format!("r{} = {name}()", out.0),
@@ -95,7 +95,7 @@ enum Allocation {
 }
 
 /// Cheap and cheerful single-pass register allocation
-pub struct RegisterAllocator<const N: usize> {
+pub struct RegisterAllocator<'s, const N: usize> {
     /// Map from a `SsaVariable` in the original tape to the relevant allocation
     allocations: Vec<Allocation>,
 
@@ -117,10 +117,10 @@ pub struct RegisterAllocator<const N: usize> {
     total_slots: usize,
 
     /// Output slots, assembled in reverse order
-    out: Vec<AsmOp>,
+    out: Vec<AsmOp<'s>>,
 }
 
-impl<const N: usize> RegisterAllocator<N> {
+impl<'s, const N: usize> RegisterAllocator<'s, N> {
     /// Builds a new `RegisterAllocator`.
     ///
     /// Upon construction, SSA register 0 is bound to local register 0; you
@@ -300,12 +300,8 @@ impl<const N: usize> RegisterAllocator<N> {
     ///
     /// This may also push `Load` or `Store` instructions to the internal tape,
     /// if there aren't enough spare registers.
-    fn op_reg(&mut self, out: SsaVariable, arg: SsaVariable, name: &str) {
-        let op = |out, lhs| AsmOp::Unary {
-            out,
-            lhs,
-            name: name.to_owned(),
-        };
+    fn op_reg(&mut self, out: SsaVariable, arg: SsaVariable, name: &'s str) {
+        let op = |out, lhs| AsmOp::Unary { out, lhs, name };
         let r_x = self.get_out_reg(out);
         if r_x == Register::INVALID {
             return;
@@ -340,12 +336,12 @@ impl<const N: usize> RegisterAllocator<N> {
     /// `Store` instructions to the internal tape.  It's trickier than it
     /// sounds; look at the source code for a table showing all 18 (!) possible
     /// configurations.
-    fn op_reg_reg(&mut self, out: SsaVariable, lhs: SsaVariable, rhs: SsaVariable, name: &str) {
+    fn op_reg_reg(&mut self, out: SsaVariable, lhs: SsaVariable, rhs: SsaVariable, name: &'s str) {
         let op = |out, lhs, rhs| AsmOp::Binary {
             out,
             lhs,
             rhs,
-            name: name.to_owned(),
+            name,
         };
         let r_x = self.get_out_reg(out);
         if r_x == Register::INVALID {
@@ -432,19 +428,16 @@ impl<const N: usize> RegisterAllocator<N> {
         }
     }
 
-    fn op_out_only(&mut self, out: SsaVariable, name: &str) {
+    fn op_out_only(&mut self, out: SsaVariable, name: &'s str) {
         let r_x = self.get_out_reg(out);
         if r_x == Register::INVALID {
             return;
         }
-        self.out.push(AsmOp::Nonary {
-            out: r_x,
-            name: name.to_owned(),
-        });
+        self.out.push(AsmOp::Nonary { out: r_x, name });
         self.release_reg(r_x);
     }
 
-    fn run(tape: &[Op]) -> Vec<AsmOp> {
+    fn run(tape: &'s [Op]) -> Vec<AsmOp<'s>> {
         if tape.is_empty() {
             return vec![];
         }
@@ -494,6 +487,12 @@ struct LruNode {
 pub struct Lru<const N: usize> {
     data: [LruNode; N],
     head: LruNode,
+}
+
+impl<const N: usize> Default for Lru<N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize> Lru<N> {
@@ -585,7 +584,10 @@ fn parse(s: &str) -> Result<Vec<Op>, (usize, String)> {
     Ok(out)
 }
 
-fn parse_line(line: &str, vars: &mut BTreeMap<String, SsaVariable>) -> Result<Op, String> {
+fn parse_line<'a>(
+    line: &'a str,
+    vars: &mut BTreeMap<&'a str, SsaVariable>,
+) -> Result<Op<'a>, String> {
     let line = line.trim();
     let mut iter = line.split('=');
 
@@ -594,7 +596,7 @@ fn parse_line(line: &str, vars: &mut BTreeMap<String, SsaVariable>) -> Result<Op
         return Err(format!("Duplicated assignment: {out}"));
     }
     let ssa_out = SsaVariable(vars.len());
-    vars.insert(out.to_owned(), ssa_out);
+    vars.insert(out, ssa_out);
 
     let op = iter
         .next()
@@ -628,16 +630,16 @@ fn parse_line(line: &str, vars: &mut BTreeMap<String, SsaVariable>) -> Result<Op
     }
     match ssa_vars.len() {
         0 => Ok(Op::Nonary {
-            name: op.to_string(),
+            name: op,
             out: ssa_out,
         }),
         1 => Ok(Op::Unary {
-            name: op.to_string(),
+            name: op,
             out: ssa_out,
             lhs: ssa_vars[0],
         }),
         2 => Ok(Op::Binary {
-            name: op.to_string(),
+            name: op,
             out: ssa_out,
             lhs: ssa_vars[0],
             rhs: ssa_vars[1],

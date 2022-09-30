@@ -554,13 +554,18 @@ pub fn bind_console_err() {
     console_error_panic_hook::set_once();
 }
 
-fn do_the_thing_n<const N: usize>(s: String) -> String {
+fn do_the_thing_n<const N: usize>(s: &str) -> String {
     if s.is_empty() {
         return "Error:\nInput is empty".to_owned();
     }
+    let start = std::time::Instant::now();
     match parse(&s) {
         Ok(s) => {
+            print!("parse time: {:?}", std::time::Instant::now() - start);
+            let start = std::time::Instant::now();
             let allocated = RegisterAllocator::<N>::run(&s);
+            print!(" alloc time: {:?}", std::time::Instant::now() - start);
+            let start = std::time::Instant::now();
             let mut out = "".to_owned();
             for s in allocated.into_iter().rev() {
                 if !out.is_empty() {
@@ -568,6 +573,7 @@ fn do_the_thing_n<const N: usize>(s: String) -> String {
                 }
                 _ = write!(&mut out, "{}", s.to_string(2));
             }
+            println!("  write time: {:?}", std::time::Instant::now() - start);
             out
         }
         Err((line_num, err)) => format!("Error:\n{err}\n(line {})", line_num + 1),
@@ -575,12 +581,12 @@ fn do_the_thing_n<const N: usize>(s: String) -> String {
 }
 
 #[wasm_bindgen]
-pub fn do_the_thing(s: String) -> String {
+pub fn do_the_thing(s: &str) -> String {
     do_the_thing_n::<2>(s)
 }
 
 #[wasm_bindgen]
-pub fn do_the_thing_generic(s: String, n: usize) -> String {
+pub fn do_the_thing_generic(s: &str, n: usize) -> String {
     match n {
         2 => do_the_thing_n::<2>(s),
         3 => do_the_thing_n::<3>(s),
@@ -735,5 +741,24 @@ mod tests {
         }
         assert!(lru.pop() == 4);
         assert!(lru.pop() == 5);
+    }
+
+    #[test]
+    fn test_thing() {
+        let s = include_str!("../prospero.txt");
+        for i in 0..10 {
+            do_the_thing(s);
+        }
+        let start = std::time::Instant::now();
+        for i in 0..100 {
+            let start = std::time::Instant::now();
+            std::fs::read_to_string("prospero.txt").unwrap();
+            println!("read in {:?}", std::time::Instant::now() - start);
+            let out = do_the_thing(s);
+            let start = std::time::Instant::now();
+            std::fs::write("out.txt", out).unwrap();
+            println!("written in {:?}", std::time::Instant::now() - start);
+        }
+        println!("done in {:?}", std::time::Instant::now() - start);
     }
 }

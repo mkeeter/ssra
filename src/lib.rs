@@ -144,6 +144,9 @@ impl<'s, const N: usize> RegisterAllocator<'s, N> {
         if i.0 >= self.allocations.len() {
             self.allocations.resize(i.0 + 1, Allocation::Unassigned);
         }
+        if let Allocation::Register(r) = self.allocations[i.0] {
+            self.register_lru.poke(r.0);
+        }
         &mut self.allocations[i.0]
     }
 
@@ -547,14 +550,13 @@ pub fn bind_console_err() {
     console_error_panic_hook::set_once();
 }
 
-#[wasm_bindgen]
-pub fn do_the_thing(s: String) -> String {
+fn do_the_thing_n<const N: usize>(s: String) -> String {
     if s.is_empty() {
         return "Error:\nInput is empty".to_owned();
     }
     match parse(&s) {
         Ok(s) => {
-            let allocated = RegisterAllocator::<2>::run(&s);
+            let allocated = RegisterAllocator::<N>::run(&s);
             let mut out = "".to_owned();
             for s in allocated.into_iter().rev() {
                 if !out.is_empty() {
@@ -565,6 +567,49 @@ pub fn do_the_thing(s: String) -> String {
             out
         }
         Err((line_num, err)) => format!("Error:\n{err}\n(line {})", line_num + 1),
+    }
+}
+
+#[wasm_bindgen]
+pub fn do_the_thing(s: String) -> String {
+    do_the_thing_n::<2>(s)
+}
+
+#[wasm_bindgen]
+pub fn do_the_thing_generic(s: String, n: usize) -> String {
+    match n {
+        2 => do_the_thing_n::<2>(s),
+        3 => do_the_thing_n::<3>(s),
+        4 => do_the_thing_n::<4>(s),
+        5 => do_the_thing_n::<5>(s),
+        6 => do_the_thing_n::<6>(s),
+        7 => do_the_thing_n::<7>(s),
+        8 => do_the_thing_n::<8>(s),
+        9 => do_the_thing_n::<9>(s),
+        10 => do_the_thing_n::<10>(s),
+        11 => do_the_thing_n::<11>(s),
+        12 => do_the_thing_n::<12>(s),
+        13 => do_the_thing_n::<13>(s),
+        14 => do_the_thing_n::<14>(s),
+        15 => do_the_thing_n::<15>(s),
+        16 => do_the_thing_n::<16>(s),
+        17 => do_the_thing_n::<17>(s),
+        18 => do_the_thing_n::<18>(s),
+        19 => do_the_thing_n::<19>(s),
+        20 => do_the_thing_n::<20>(s),
+        21 => do_the_thing_n::<21>(s),
+        22 => do_the_thing_n::<22>(s),
+        23 => do_the_thing_n::<23>(s),
+        24 => do_the_thing_n::<24>(s),
+        25 => do_the_thing_n::<25>(s),
+        26 => do_the_thing_n::<26>(s),
+        27 => do_the_thing_n::<27>(s),
+        28 => do_the_thing_n::<28>(s),
+        29 => do_the_thing_n::<29>(s),
+        30 => do_the_thing_n::<30>(s),
+        31 => do_the_thing_n::<31>(s),
+        32 => do_the_thing_n::<32>(s),
+        _ => format!("Error:\nInvalid register count {} (expected 2-32)", n),
     }
 }
 

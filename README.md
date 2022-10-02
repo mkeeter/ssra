@@ -1,5 +1,7 @@
 # The Solid-State Register Allocator
-A didactic implementation
+A simple, extremely fast, reverse linear scan register allocator.
+
+See the [detailed write-up](https://mattkeeter.com/blog/20220-xx-xx-ssra) for an in-depth explanation.
 
 # Building
 ```

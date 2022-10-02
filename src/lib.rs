@@ -548,6 +548,7 @@ impl<const N: usize> Lru<N> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// Everything below this point is glue for the wasm demo and can be ignored
 
 #[wasm_bindgen(start)]
 pub fn bind_console_err() {

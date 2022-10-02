@@ -512,22 +512,30 @@ impl<const N: usize> Lru<N> {
         out
     }
 
+    /// Remove the given node from the list
+    fn remove(&mut self, i: usize) {
+        self.data[self.data[i].prev].next = self.data[i].next;
+        self.data[self.data[i].next].prev = self.data[i].prev;
+    }
+
+    /// Inserts node `i` before location `next`
+    fn insert_before(&mut self, i: usize, next: usize) {
+        let prev = self.data[next].prev;
+        self.data[prev].next = i;
+        self.data[next].prev = i;
+        self.data[i] = LruNode { next, prev };
+    }
+
     /// Mark the given node as newest
     pub fn poke(&mut self, i: usize) {
         let prev_newest = self.head;
         if i == prev_newest {
             return;
         } else if self.data[prev_newest].prev != i {
-            // Remove this node from the list
-            self.data[self.data[i].prev].next = self.data[i].next;
-            self.data[self.data[i].next].prev = self.data[i].prev;
-
-            // Splice this node right before self.head
-            let prev = self.data[self.head].prev;
-            self.data[prev].next = i;
-            self.data[self.head].prev = i;
-            self.data[i].next = self.head;
-            self.data[i].prev = prev;
+            // If this wasn't the oldest node, then remove it and
+            // reinsert itright before the head of the list.
+            self.remove(i);
+            self.insert_before(i, self.head);
         }
         self.head = i; // rotate
     }

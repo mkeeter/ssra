@@ -2,8 +2,12 @@
 name = "ssra"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT OR Apache-2.0"
+authors = ["Matt Keeter <matt.j.keeter@gmail.com"]
+repository = "https://github.com/mkeeter/ssra"
+homepage = "https://mattkeeter.com/blog/2022-xx-xx-ssra"
+description = "Didactic implementation of the Solid-State Register Allocator"
+readme = "README.md"
 
 [dependencies]
 arrayvec = "0.7.2"

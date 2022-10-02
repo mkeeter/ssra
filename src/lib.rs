@@ -745,16 +745,17 @@ mod tests {
 
     #[test]
     fn test_thing() {
+        const REG_COUNT: usize = 24;
         let s = include_str!("../prospero.txt");
         for _ in 0..10 {
-            do_the_thing(s);
+            do_the_thing_generic(s, REG_COUNT);
         }
         let start = std::time::Instant::now();
         for _ in 0..100 {
             let start = std::time::Instant::now();
             std::fs::read_to_string("prospero.txt").unwrap();
             println!("read in {:?}", std::time::Instant::now() - start);
-            let out = do_the_thing(s);
+            let out = do_the_thing_generic(s, REG_COUNT);
             let start = std::time::Instant::now();
             std::fs::write("out.txt", out).unwrap();
             println!("written in {:?}", std::time::Instant::now() - start);

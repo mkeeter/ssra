@@ -746,8 +746,11 @@ mod tests {
     #[test]
     fn test_thing() {
         let s = include_str!("../prospero.txt");
+        for _ in 0..10 {
+            do_the_thing(s);
+        }
         let start = std::time::Instant::now();
-        for i in 0..1 {
+        for _ in 0..100 {
             let start = std::time::Instant::now();
             std::fs::read_to_string("prospero.txt").unwrap();
             println!("read in {:?}", std::time::Instant::now() - start);

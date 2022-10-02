@@ -484,12 +484,12 @@ struct LruNode {
 ///      -------      -------      -------      --------
 ///      |  a  | <--> |  b  | <--> |  c  | <--> | head | <--|
 ///      -------      -------      -------      --------    |
-///         ^                       oldest                  |
+///         ^                       oldest       newest     |
 ///         |-----------------------------------------------|
 /// ```
 pub struct Lru<const N: usize> {
     data: [LruNode; N],
-    head: LruNode,
+    head: usize,
 }
 
 impl<const N: usize> Default for Lru<N> {
@@ -501,44 +501,40 @@ impl<const N: usize> Default for Lru<N> {
 impl<const N: usize> Lru<N> {
     pub fn new() -> Self {
         let mut out = Self {
-            head: LruNode {
-                prev: N - 1,
-                next: 0,
-            },
+            head: 0,
             data: [LruNode { prev: 0, next: 0 }; N],
         };
         for i in 0..N {
-            out.data[i].prev = i.checked_sub(1).unwrap_or(N);
-            out.data[i].next = i + 1;
+            out.data[i].prev = i.checked_sub(1).unwrap_or(N - 1);
+            out.data[i].next = (i + 1) % N;
         }
 
         out
     }
 
-    fn get_mut(&mut self, i: usize) -> &mut LruNode {
-        assert!(i <= N);
-        self.data.get_mut(i).unwrap_or(&mut self.head)
-    }
-
     /// Mark the given node as newest
     pub fn poke(&mut self, i: usize) {
-        let prev_newest = self.head.next;
-        if prev_newest != i {
+        let prev_newest = self.head;
+        if i == prev_newest {
+            return;
+        } else if self.data[prev_newest].prev != i {
             // Remove this node from the list
-            self.get_mut(self.data[i].prev).next = self.data[i].next;
-            self.get_mut(self.data[i].next).prev = self.data[i].prev;
+            self.data[self.data[i].prev].next = self.data[i].next;
+            self.data[self.data[i].next].prev = self.data[i].prev;
 
-            // Reinsert the node between prev_newest and the head
-            self.data[prev_newest].prev = i;
-            self.head.next = i;
-            self.data[i].next = prev_newest;
-            self.data[i].prev = N;
+            // Splice this node right before self.head
+            let prev = self.data[self.head].prev;
+            self.data[prev].next = i;
+            self.data[self.head].prev = i;
+            self.data[i].next = self.head;
+            self.data[i].prev = prev;
         }
+        self.head = i; // rotate
     }
     /// Look up the oldest node in the list, marking it as newest
     pub fn pop(&mut self) -> usize {
-        let out = self.head.prev;
-        self.poke(out);
+        let out = self.data[self.head].prev;
+        self.head = out; // rotate
         out
     }
 }

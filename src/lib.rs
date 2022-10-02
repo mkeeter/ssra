@@ -567,7 +567,7 @@ fn do_the_thing_n<const N: usize>(s: String) -> String {
                 if !out.is_empty() {
                     out += "\n";
                 }
-                _ = write!(&mut out, "{}", s.to_string(2));
+                _ = write!(&mut out, "{}", s.to_string(N));
             }
             out
         }
